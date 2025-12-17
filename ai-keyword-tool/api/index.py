@@ -1,12 +1,12 @@
 from flask import Flask, request, jsonify, render_template_string
-from openai import OpenAI
 import os
 import json
 import re
 
-app = Flask(__name__)
+# NOT: OpenAI'ı burada import ETMİYORUZ. Aşağıda edeceğiz.
+# Böylece site açılırken hata vermeyecek.
 
-# NOT: client değişkenini burada tanımlamıyoruz, hata vermesin diye aşağıya aldık.
+app = Flask(__name__)
 
 def clean_json_string(json_string):
     pattern = r"```json\s*(.*?)\s*```"
@@ -17,71 +17,75 @@ def clean_json_string(json_string):
 
 @app.route('/')
 def home():
-    # API Key kontrolü (Ekrana uyarı basmak için)
-    key_status = "✅ Bağlı" if os.environ.get("OPENAI_API_KEY") else "❌ Eksik!"
-    
-    html_content = f"""
+    html_content = """
     <!DOCTYPE html>
     <html lang="tr">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>AI Keyword Tool</title>
+        <title>AI Analiz Aracı</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     </head>
     <body class="bg-light">
     <div class="container py-5">
         <div class="card shadow p-4">
-            <h2 class="text-center mb-3">AI Arama Niyeti Analizi</h2>
-            <p class="text-center text-muted">API Durumu: <strong>{key_status}</strong></p>
+            <h2 class="text-center text-primary mb-3">AI Arama Niyeti Analizi</h2>
+            <div class="alert alert-success text-center">✅ Site Başarıyla Açıldı!</div>
             
             <form id="researchForm">
                 <div class="mb-3">
-                    <label>Anahtar Kelime</label>
+                    <label class="fw-bold">Anahtar Kelime</label>
                     <input type="text" class="form-control" id="keyword" placeholder="Örn: Nakliyat" required>
                 </div>
-                <div class="row">
-                    <div class="col-6"><label>Dil</label><select id="language" class="form-select"><option>Turkish</option><option>English</option></select></div>
-                    <div class="col-6"><label>Niyet</label><select id="intent" class="form-select"><option>High Buying Intent</option><option>Informational</option></select></div>
+                <div class="row mb-3">
+                    <div class="col"><label>Dil</label><select id="language" class="form-select"><option>Turkish</option><option>English</option></select></div>
+                    <div class="col"><label>Niyet</label><select id="intent" class="form-select"><option>High Buying Intent</option><option>Informational</option></select></div>
                 </div>
-                <button type="submit" class="btn btn-danger w-100 mt-3" id="analyzeBtn">Analiz Et</button>
+                <button type="submit" class="btn btn-primary w-100" id="analyzeBtn">Analiz Et</button>
             </form>
-            <div id="loading" class="text-center mt-3" style="display:none;">Lütfen bekleyin...</div>
+            <div id="loading" class="text-center mt-3" style="display:none;">
+                <div class="spinner-border text-primary" role="status"></div>
+                <p>Yapay zeka düşünüyor...</p>
+            </div>
             <div id="resultsArea" class="mt-4"></div>
         </div>
     </div>
 
     <script>
-    document.getElementById('researchForm').addEventListener('submit', function(e) {{
+    document.getElementById('researchForm').addEventListener('submit', function(e) {
         e.preventDefault();
         document.getElementById('loading').style.display = 'block';
         document.getElementById('resultsArea').innerHTML = '';
         
-        fetch('/analyze', {{
+        fetch('/analyze', {
             method: 'POST',
-            headers: {{ 'Content-Type': 'application/json' }},
-            body: JSON.stringify({{
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
                 keyword: document.getElementById('keyword').value,
                 language: document.getElementById('language').value,
                 intent: document.getElementById('intent').value
-            }})
-        }})
+            })
+        })
         .then(response => response.json())
-        .then(data => {{
+        .then(data => {
             document.getElementById('loading').style.display = 'none';
-            if(data.error) {{
-                document.getElementById('resultsArea').innerHTML = '<div class="alert alert-danger">' + data.error + '</div>';
-            }} else {{
-                data.forEach(item => {{
-                    document.getElementById('resultsArea').innerHTML += '<div class="card p-2 mb-2 border-start border-4 border-danger">' + item.question + ' <span class="badge bg-secondary">' + item.relevancy + '%</span></div>';
-                }});
-            }}
-        }})
-        .catch(err => {{
+            if(data.error) {
+                document.getElementById('resultsArea').innerHTML = '<div class="alert alert-danger"><b>Hata:</b> ' + data.error + '</div>';
+            } else {
+                data.forEach(item => {
+                    let color = item.type === 'Transactional' ? 'success' : 'warning';
+                    document.getElementById('resultsArea').innerHTML += 
+                        '<div class="card p-3 mb-2 border-start border-4 border-'+color+' shadow-sm">' + 
+                        '<h5>' + item.question + '</h5>' +
+                        '<small class="text-muted">Alaka: %' + item.relevancy + ' • Tür: ' + item.type + '</small></div>';
+                });
+            }
+        })
+        .catch(err => {
             document.getElementById('loading').style.display = 'none';
-            document.getElementById('resultsArea').innerHTML = '<div class="alert alert-danger">Sunucu Hatası.</div>';
-        }});
-    }});
+            document.getElementById('resultsArea').innerHTML = '<div class="alert alert-danger">Sunucu bağlantı hatası.</div>';
+        });
+    });
     </script>
     </body>
     </html>
@@ -90,11 +94,16 @@ def home():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    # API KEY'İ BURADA ÇAĞIRIYORUZ (GÜVENLİ YÖNTEM)
+    # KÜTÜPHANELERİ BURADA İÇE AKTARIYORUZ (Lazy Import)
+    # Eğer requirements.txt hatası varsa, hatayı burada yakalayıp ekrana basacağız.
+    try:
+        from openai import OpenAI
+    except ImportError:
+        return jsonify({"error": "OpenAI kütüphanesi bulunamadı! Lütfen requirements.txt dosyasının ana dizinde olduğundan emin olun."}), 500
+
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        print("HATA: API Key bulunamadı.")
-        return jsonify({"error": "Sunucuda OPENAI_API_KEY tanımlanmamış!"}), 500
+        return jsonify({"error": "API Anahtarı (OPENAI_API_KEY) Vercel ayarlarında eksik."}), 500
 
     try:
         client = OpenAI(api_key=api_key)
@@ -102,8 +111,7 @@ def analyze():
         
         system_instruction = f"""
         Generate 3 search questions for keyword: "{data.get('keyword')}" in "{data.get('language')}".
-        Format: JSON Array [{{ "question": "...", "relevancy": 90, "type": "Transactional" }}]
-        Only JSON.
+        Format: JSON Array ONLY. Example: [{{ "question": "...", "relevancy": 90, "type": "Transactional" }}]
         """
 
         response = client.chat.completions.create(
@@ -114,7 +122,6 @@ def analyze():
         return jsonify(json.loads(content))
         
     except Exception as e:
-        print(f"HATA DETAYI: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
